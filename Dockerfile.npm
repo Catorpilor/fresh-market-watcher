@@ -1,0 +1,21 @@
+# Use Node.js 20 Alpine image for smaller size
+FROM node:20-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies with frozen lockfile
+RUN npm ci
+
+# Copy TypeScript config and source files
+COPY tsconfig.json ./
+COPY src ./src
+
+# Expose port
+EXPOSE 8787
+
+# Start the application using tsx (which handles TypeScript directly)
+CMD ["npm", "start"]
