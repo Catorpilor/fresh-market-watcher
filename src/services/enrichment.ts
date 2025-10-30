@@ -50,13 +50,19 @@ export async function enrichPairData(
 
   for (const pair of pairs) {
     try {
-      // Get liquidity data
-      const liquidity = await getPairLiquidity(client, pair.pair_address);
+      // Add a small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 100));
 
-      // Get token information
-      const tokenInfos = await Promise.all(
-        pair.tokens.map(token => getTokenInfo(client, token))
-      );
+      // Get liquidity data - pass the creation block to get initial liquidity
+      const liquidity = await getPairLiquidity(client, pair.pair_address, BigInt(pair.block_number));
+
+      // Get token information with delay
+      const tokenInfos: TokenInfo[] = [];
+      for (const token of pair.tokens) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+        const info = await getTokenInfo(client, token);
+        tokenInfos.push(info);
+      }
 
       // Get top holders (limited to top 5)
       const topHolders = await getTopHolders(
@@ -76,13 +82,17 @@ export async function enrichPairData(
         ...pair,
         init_liquidity: initLiquidity,
         top_holders: topHolders,
-        // Add token metadata
-        tokens: tokenInfos.map(t => `${t.address} (${t.symbol || 'Unknown'})`),
+        // Add token metadata - only addresses as per spec
+        tokens: tokenInfos.map(t => t.address),
       });
     } catch (error) {
       console.error(`Error enriching pair ${pair.pair_address}:`, error);
-      // Return pair with available data even if enrichment fails
-      enrichedPairs.push(pair);
+      // Return pair with minimal data even if enrichment fails
+      enrichedPairs.push({
+        ...pair,
+        init_liquidity: 'Unable to fetch',
+        top_holders: []
+      });
     }
   }
 
@@ -91,31 +101,58 @@ export async function enrichPairData(
 
 async function getPairLiquidity(
   client: PublicClient,
-  pairAddress: string
+  pairAddress: string,
+  creationBlock: bigint
 ): Promise<LiquidityInfo> {
   try {
-    const [reserves, totalSupply] = await Promise.all([
-      client.readContract({
-        address: getAddress(pairAddress),
-        abi: PAIR_ABI,
-        functionName: 'getReserves',
-      }),
-      client.readContract({
-        address: getAddress(pairAddress),
-        abi: PAIR_ABI,
-        functionName: 'totalSupply',
-      }),
-    ]);
+    console.log(`Fetching initial liquidity for pair: ${pairAddress} at block ${creationBlock}`);
 
-    const [reserve0, reserve1] = reserves as [bigint, bigint, number];
+    // Define Mint event ABI
+    const MINT_EVENT = parseAbiItem(
+      'event Mint(address indexed sender, uint256 amount0, uint256 amount1)'
+    );
+
+    // Try to get the first Mint event to find initial liquidity
+    const mintLogs = await client.getLogs({
+      address: getAddress(pairAddress),
+      event: MINT_EVENT,
+      fromBlock: creationBlock,
+      toBlock: creationBlock + 10n, // Check within 10 blocks of creation
+    });
+
+    if (mintLogs.length > 0) {
+      // Use the first Mint event as initial liquidity
+      const firstMint = mintLogs[0];
+      const decoded = decodeEventLog({
+        abi: [MINT_EVENT],
+        data: firstMint.data,
+        topics: firstMint.topics,
+      });
+
+      const args = decoded.args as { sender: string; amount0: bigint; amount1: bigint };
+
+      console.log(`Initial liquidity from Mint event:`, {
+        amount0: args.amount0.toString(),
+        amount1: args.amount1.toString()
+      });
+
+      return {
+        reserve0: args.amount0.toString(),
+        reserve1: args.amount1.toString(),
+        totalSupply: '0', // Not needed for initial liquidity display
+      };
+    }
+
+    // Fallback: if no Mint event found, return zero liquidity
+    console.log(`No Mint event found for pair ${pairAddress}, likely no initial liquidity yet`);
 
     return {
-      reserve0: reserve0.toString(),
-      reserve1: reserve1.toString(),
-      totalSupply: totalSupply.toString(),
+      reserve0: '0',
+      reserve1: '0',
+      totalSupply: '0',
     };
   } catch (error) {
-    console.error('Error getting liquidity:', error);
+    console.error('Error getting initial liquidity for', pairAddress, ':', error);
     return {
       reserve0: '0',
       reserve1: '0',
@@ -247,6 +284,18 @@ function formatInitialLiquidity(
     const reserve0 = BigInt(liquidity.reserve0);
     const reserve1 = BigInt(liquidity.reserve1);
 
+    console.log('Formatting liquidity:', {
+      reserve0: liquidity.reserve0,
+      reserve1: liquidity.reserve1,
+      token0: tokenInfos[0],
+      token1: tokenInfos[1]
+    });
+
+    // If reserves are 0, return a clear message
+    if (reserve0 === 0n && reserve1 === 0n) {
+      return 'No liquidity';
+    }
+
     const decimals0 = tokenInfos[0]?.decimals || 18;
     const decimals1 = tokenInfos[1]?.decimals || 18;
 
@@ -258,6 +307,7 @@ function formatInitialLiquidity(
 
     return `${parseFloat(formatted0).toFixed(2)} ${symbol0} / ${parseFloat(formatted1).toFixed(2)} ${symbol1}`;
   } catch (error) {
+    console.error('Error formatting liquidity:', error);
     return 'Unknown';
   }
 }

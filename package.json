@@ -7,7 +7,7 @@
     "bun": ">=1.1.0"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "bun --watch src/index.ts",
     "start": "tsx src/index.ts",
     "start:bun": "bun run src/index.ts",
     "build": "tsc",

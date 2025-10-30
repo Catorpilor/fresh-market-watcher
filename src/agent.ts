@@ -2,14 +2,21 @@ import { z } from "zod";
 import { createAgentApp } from "@lucid-dreams/agent-kit";
 import { detectNewPairs } from "./services/detector";
 
+// Load environment variables with defaults
+const FACILITATOR_URL = process.env.FACILITATOR_URL || "https://facilitator.payai.network";
+const PAY_TO_ADDRESS = process.env.PAY_TO_ADDRESS || "0x4Dec2Ac51E74EDFCFFA084A14A008FaA9E6F739c";
+const PAYMENT_NETWORK = process.env.PAYMENT_NETWORK || "base";
+const DEFAULT_PRICE = process.env.DEFAULT_PRICE || "100000";
+const ENTRYPOINT_PRICE = process.env.ENTRYPOINT_PRICE || "0.03";
+
 // Adjust these options to configure payments, trust metadata, or AP2 metadata.
 const agentOptions = {
   config: {
     payments: {
-      facilitatorUrl: "https://facilitator.daydreams.systems" as `${string}://${string}`,
-      payTo: "0x4Dec2Ac51E74EDFCFFA084A14A008FaA9E6F739c" as `0x${string}`,
-      network: "base" as "base",
-      defaultPrice: "100000",
+      facilitatorUrl: FACILITATOR_URL as `${string}://${string}`,
+      payTo: PAY_TO_ADDRESS as `0x${string}`,
+      network: PAYMENT_NETWORK as "base",
+      defaultPrice: DEFAULT_PRICE,
     },
   },
   useConfigPayments: true,
@@ -29,82 +36,32 @@ addEntrypoint({
   description: "List new AMM pairs created on specified chain within the time window",
   input: z.object({
     chain: z.string().describe("Target blockchain (ethereum, polygon, arbitrum, optimism, base, bsc, etc.)"),
-    factories: z.array(z.string()).describe("Array of AMM factory contract addresses to monitor"),
-    window_minutes: z.union([
-      z.number(),
-      z.string().transform((val) => parseInt(val, 10))
-    ]).refine((val) => {
-      const num = typeof val === 'string' ? parseInt(val, 10) : val;
-      return !isNaN(num) && num >= 1 && num <= 1440;
-    }, {
-      message: "window_minutes must be between 1 and 1440"
-    }).default(60).describe("Time window to scan in minutes (default: 60, max: 1440)"),
+    factories: z.string().describe("Array of AMM factory contract addresses to monitor, sepererate by ,"),
+    window_minutes: z.string().min(1).max(2).describe("Time window to scan in minutes (default: 60, max: 1440)"),
     rpc_url: z.string().optional().describe("Optional custom RPC URL. If not provided, uses default for the chain"),
   }),
-  price: "0.03",
+  price: ENTRYPOINT_PRICE,
+  handler: async ({ input }) => {
+    const pairs = await detectNewPairs({
+      chain: input.chain,
+      factories: input.factories.split(","),
+      windowMinutes: parseInt(input.window_minutes) || 1,
+      rpcUrl: input.rpc_url,
+    });
 
-  handler: async (request) => {
-    // Handle malformed x402 payload structure
-    const rawRequest = request as any;
 
-    // Check if factories is at root level as "input.factories"
-    let input = rawRequest.input || {};
-
-    if (rawRequest["input.factories"] && !input.factories) {
-      input.factories = rawRequest["input.factories"];
-    }
-
-    // Also check for other potentially misplaced fields
-    if (rawRequest["input.rpc_url"] && !input.rpc_url) {
-      input.rpc_url = rawRequest["input.rpc_url"];
-    }
-    try {
-      // Debug logging
-      console.log('Raw request:', JSON.stringify(rawRequest, null, 2));
-      console.log('Processed input:', JSON.stringify(input, null, 2));
-
-      // Validate required fields
-      if (!input.chain) {
-        throw new Error('chain is required');
-      }
-      if (!input.factories || !Array.isArray(input.factories)) {
-        throw new Error('factories must be an array of contract addresses');
-      }
-
-      // Ensure window_minutes is a number
-      const windowMinutes = typeof input.window_minutes === 'string'
-        ? parseInt(input.window_minutes, 10)
-        : input.window_minutes;
-
-      const pairs = await detectNewPairs({
+    return {
+      output: {
+        success: true,
         chain: input.chain,
-        factories: input.factories,
-        windowMinutes: windowMinutes || 60,
-        rpcUrl: input.rpc_url,
-      });
-
-      return {
-        output: {
-          success: true,
-          chain: input.chain,
-          window_minutes: input.window_minutes,
-          total_pairs_found: pairs.length,
-          pairs: pairs,
-        },
-      };
-    } catch (error) {
-      console.error('Error processing request:', error);
-      return {
-        output: {
-          success: false,
-          error: error instanceof Error ? error.message : "Unknown error occurred",
-          debug: {
-            rawRequest: rawRequest,
-            processedInput: input
-          }
-        },
-      };
-    }
+        window_minutes: input.window_minutes,
+        total_pairs_found: pairs.length,
+        pairs: pairs,
+        rpc_info: input.rpc_url
+          ? `Using custom RPC: ${input.rpc_url}`
+          : `Using default RPC. If experiencing rate limits, provide a custom rpc_url parameter`,
+      },
+    };
   },
 });
 
