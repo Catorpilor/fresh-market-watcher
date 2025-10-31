@@ -48,8 +48,9 @@ export const CHAIN_CONFIGS: Record<string, ChainConfig> = {
     blockTime: 2,
     defaultRpc: "https://mainnet.base.org",
     commonFactories: [
-      "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6", // BaseSwap
-      "0x420DD381b31aEf6683db6B902084cB0FFECe40Da", // Aerodrome
+      "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6", // BaseSwap V2
+      "0x420DD381b31aEf6683db6B902084cB0FFECe40Da", // Aerodrome V2
+      "0x33128a8fC17869897dcE68Ed026d694621f6FDfD", // Uniswap V3
     ],
   },
   bsc: {

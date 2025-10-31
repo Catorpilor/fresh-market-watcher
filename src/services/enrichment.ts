@@ -107,31 +107,43 @@ async function getPairLiquidity(
   try {
     console.log(`Fetching initial liquidity for pair: ${pairAddress} at block ${creationBlock}`);
 
-    // Define Mint event ABI
-    const MINT_EVENT = parseAbiItem(
+    // Define Mint event ABIs for both V2 and V3
+    const V2_MINT_EVENT = parseAbiItem(
       'event Mint(address indexed sender, uint256 amount0, uint256 amount1)'
     );
 
-    // Try to get the first Mint event to find initial liquidity
-    const mintLogs = await client.getLogs({
-      address: getAddress(pairAddress),
-      event: MINT_EVENT,
-      fromBlock: creationBlock,
-      toBlock: creationBlock + 10n, // Check within 10 blocks of creation
-    });
+    const V3_MINT_EVENT = parseAbiItem(
+      'event Mint(address sender, address indexed owner, int24 indexed tickLower, int24 indexed tickUpper, uint128 amount, uint256 amount0, uint256 amount1)'
+    );
 
-    if (mintLogs.length > 0) {
-      // Use the first Mint event as initial liquidity
-      const firstMint = mintLogs[0];
+    // Try to get Mint events (try both V2 and V3)
+    const [v2Logs, v3Logs] = await Promise.allSettled([
+      client.getLogs({
+        address: getAddress(pairAddress),
+        event: V2_MINT_EVENT,
+        fromBlock: creationBlock,
+        toBlock: creationBlock + 10n,
+      }),
+      client.getLogs({
+        address: getAddress(pairAddress),
+        event: V3_MINT_EVENT,
+        fromBlock: creationBlock,
+        toBlock: creationBlock + 10n,
+      }),
+    ]);
+
+    // Try V2 Mint event first
+    if (v2Logs.status === 'fulfilled' && v2Logs.value.length > 0) {
+      const firstMint = v2Logs.value[0];
       const decoded = decodeEventLog({
-        abi: [MINT_EVENT],
+        abi: [V2_MINT_EVENT],
         data: firstMint.data,
         topics: firstMint.topics,
       });
 
       const args = decoded.args as { sender: string; amount0: bigint; amount1: bigint };
 
-      console.log(`Initial liquidity from Mint event:`, {
+      console.log(`Initial liquidity from V2 Mint event:`, {
         amount0: args.amount0.toString(),
         amount1: args.amount1.toString()
       });
@@ -139,7 +151,38 @@ async function getPairLiquidity(
       return {
         reserve0: args.amount0.toString(),
         reserve1: args.amount1.toString(),
-        totalSupply: '0', // Not needed for initial liquidity display
+        totalSupply: '0',
+      };
+    }
+
+    // Try V3 Mint event
+    if (v3Logs.status === 'fulfilled' && v3Logs.value.length > 0) {
+      const firstMint = v3Logs.value[0];
+      const decoded = decodeEventLog({
+        abi: [V3_MINT_EVENT],
+        data: firstMint.data,
+        topics: firstMint.topics,
+      });
+
+      const args = decoded.args as {
+        sender: string;
+        owner: string;
+        tickLower: number;
+        tickUpper: number;
+        amount: bigint;
+        amount0: bigint;
+        amount1: bigint;
+      };
+
+      console.log(`Initial liquidity from V3 Mint event:`, {
+        amount0: args.amount0.toString(),
+        amount1: args.amount1.toString()
+      });
+
+      return {
+        reserve0: args.amount0.toString(),
+        reserve1: args.amount1.toString(),
+        totalSupply: '0',
       };
     }
 
