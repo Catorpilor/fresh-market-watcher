@@ -102,6 +102,15 @@ export const CHAIN_CONFIGS: Record<string, ChainConfig> = {
       "0x19B85ae92947E0725d5265fFB3389e7E4F191FDa", // StellaSwap
     ],
   },
+  xlayer: {
+    name: "X-Layer",
+    blockTime: 0.1,
+    defaultRpc: "https://rpc.xlayer.tech",
+    commonFactories: [
+      "0x2CcaDb1e437AA9cDc741574bDa154686B1F04C09", // Dyor
+      "0x004c0De9ef816c9bD643880eF5226658C356Fe9D", // oko
+    ],
+  },
 };
 
 export function getChainConfig(chain: string): ChainConfig | undefined {
